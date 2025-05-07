@@ -14,6 +14,49 @@ def generate_random_hebrew_letters():
                       'ק', 'ר', 'ש', 'ת']
     return ''.join(random.sample(hebrew_letters, 2))
 
+# Map Hebrew final letters to normal forms
+final_letters = {
+    'ך': 'כ',
+    'ם': 'מ',
+    'ן': 'נ',
+    'ף': 'פ',
+    'ץ': 'צ'
+}
+
+
+# Function to normalize a word (replace final forms with normal ones)
+def normalize(word):
+    return ''.join(final_letters.get(c, c) for c in word)
+
+
+# Function to load words and generate sequences
+def generate_sequences(file_path):
+    with open(file_path, encoding='utf-8') as f:
+        words = [normalize(line.strip()) for line in f if line.strip()]
+
+    sequences_2 = set()
+    sequences_3 = set()
+
+    for word in words:
+        length = len(word)
+        for i in range(length - 1):  # 2-letter sequences
+            sequences_2.add(word[i:i + 2])
+        for i in range(length - 2):  # 3-letter sequences
+            sequences_3.add(word[i:i + 3])
+    print(sequences_2, '\n')
+    print(sequences_3)
+    return list(sequences_2), list(sequences_3)
+
+
+# Function to pick a random sequence
+def pick_sequence(sequences_2, sequences_3):
+    if random.random() < 0.7:
+        # 70% chance for 2-letter
+        return random.choice(sequences_2)
+    else:
+        # 30% chance for 3-letter
+        return random.choice(sequences_3)
+
 
 def verify(word, letters):
     if letters not in word:
@@ -41,7 +84,7 @@ class Player:
     def send_message(self, message):
         """Send a message to the player via their socket."""
         try:
-            print(f"player{self.id},sent:  {message}")
+            # print(f"player{self.id},sent:  {message}")
             self.socket.sendall(message.encode())  # Send encoded message
         except (ConnectionResetError, BrokenPipeError, OSError):
             self.server.remove_client(self)  # close connection with client
@@ -54,7 +97,11 @@ class Player:
     def receive_message(self):
         """Receive a message from the player (blocking)."""
         try:
-            return self.socket.recv(1024).decode()  # Receive and decode message
+            data = self.socket.recv(1024).decode()
+            messages = data.split("\n")
+            for msg in messages:
+                print(f"rcv: {msg} from player{self.id}")
+                return msg  # Receive and decode message
         except socket.timeout:
             raise  # Let timeout propagate so `get_word` can catch it
         except (ConnectionResetError, BrokenPipeError, OSError):
@@ -155,14 +202,15 @@ class Server:
         check_expired_thread.set()
 
     def manage_turns(self):
+        sequences_2, sequences_3 = generate_sequences('C:\sagiv-python\word_list.txt')
         while len(self.players) > 1:
             current_player = self.players[0]  # Get the first player in the list
             letters_str = generate_random_hebrew_letters()
-
+            challenge = pick_sequence(sequences_2, sequences_3)
             # Notify player that it's their turn
-            current_player.send_message(f"TURN_START|{letters_str}\n")
-            print(f"server: It's {current_player.name}'s turn. Letters: {letters_str}")
-            current_player.set_letters(letters_str)  # set the letters in player
+            current_player.send_message(f"TURN_START|{challenge}\n")
+            print(f"server: It's {current_player.name}'s turn. Letters: {challenge}")
+            current_player.set_letters(challenge)  # set the letters in player
             self.update_all_client(current_player)
 
             timer_expired = threading.Event()
@@ -173,13 +221,14 @@ class Server:
 
             while not timer_expired.is_set() and current_player in self.players:
                 word = self.get_word(current_player, timer_expired)
+                print(f"***{word}***")
                 # word = current_player.receive_message()
-                if word is not None and verify(word, letters_str):
+                if word is not None and verify(word, challenge):
                     timer.cancel()  # cancel timer
                     current_player.send_message("VALID_WORD|Turn over\n")
                     break
                 else:
-                    current_player.send_message(f"INVALID_WORD|Try again. Letters: {letters_str}\n")
+                    current_player.send_message(f"INVALID_WORD|Try again. Letters: {challenge}\n")
 
             else:
                 current_player.send_message("TIME_UP|You lost a life!\n")
