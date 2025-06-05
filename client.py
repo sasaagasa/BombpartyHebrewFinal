@@ -1,9 +1,12 @@
 import socket
 import threading
 import sys
+
+from PyQt6 import QtWidgets
+
 from game_screen import Ui_GameWindow
 from welcome import Ui_MainWindow
-from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel
+from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel, QWidget
 from PyQt6.QtCore import QTimer
 
 
@@ -57,10 +60,20 @@ def handle_valid_word(window):
 
 
 def handle_time_up(window):
-    print("Time's up! You lose 1 life.")
+    print(f"Time's up! you lose 1 life.")
     window.set_input_enabled(False)
     window.clear_input()
     window.update_status("⏰ Time's Up!", "orange")
+
+
+def handle_life_lost(window, value):
+    try:
+        name, hearts_str = value.split(":")
+        hearts = int(hearts_str)
+        window.update_hearts(name, hearts)
+        print(f"**********{hearts},{name}")
+    except Exception as e:
+        print(f"Failed to parse life lost message: {value} — {e}")
 
 
 def handle_invalid_word(window, retry_message):
@@ -96,6 +109,7 @@ def handle_server_messages(client, window):
             "UPDATE_LETTERS": lambda values: handle_update_letters(window, values),
             "VALID_WORD": lambda values: handle_valid_word(window),
             "TIME_UP": lambda values: handle_time_up(window),
+            "PLAYER_LOST_LIFE": lambda values: handle_life_lost(window, values),
             "INVALID_WORD": lambda values: handle_invalid_word(window, values),
             "USED_WORD": lambda values: handle_used_word(window, values),
             "PLAYER_LIST": lambda values: handle_player_list(window, values)
@@ -144,13 +158,15 @@ class GameWindow(QMainWindow, Ui_GameWindow):
         self.client = client
         self.displayed_players = set()
         self.saved_text = ""
-
+        self.player_hearts = {}  # maps player name -> QLabel showing their hearts
         self.setupUi(self)
 
         # Connect UI events
         self.input_box.textChanged.connect(self.save_input)
         self.input_box.returnPressed.connect(self.send_input)
+        self.input_box.setEnabled(False)
         self.start_button.clicked.connect(self.start_game)
+        self.start_button.setEnabled(False)
 
     def update_player_list(self, player_names):
         self._player_names_to_update = player_names
@@ -158,19 +174,35 @@ class GameWindow(QMainWindow, Ui_GameWindow):
 
     def _apply_player_list_update(self):
         self.clear_player_list()
+        self.player_hearts.clear()
+
         for name in self._player_names_to_update:
-            label = QLabel(name)
-            label.setStyleSheet("""
-                QLabel {
-                    background-color: #333;
-                    border: 1px solid #FFA500;
-                    border-radius: 8px;
-                    padding: 10px;
-                    font-size: 16px;
-                }
+            container = QWidget()
+            layout = QtWidgets.QHBoxLayout(container)
+            layout.setContentsMargins(0, 0, 0, 0)
+
+            name_label = QLabel(name)
+            name_label.setStyleSheet("""
+                color: white;
+                font-weight: bold;
+                font-size: 16px;
             """)
-            self.player_list_layout.addWidget(label)
+
+            hearts_label = QLabel("❤️❤️❤️")  # Default 3 lives
+            hearts_label.setStyleSheet("font-size: 16px; margin-left: 10px;")
+
+            layout.addWidget(name_label)
+            layout.addWidget(hearts_label)
+
+            self.player_list_layout.addWidget(container)
+
             self.displayed_players.add(name)
+            self.player_hearts[name] = hearts_label  # Store for future updates
+
+    def update_hearts(self, name, hearts):
+        if name in self.displayed_players:
+            print("saasdsfsdff")
+            self.player_hearts[name].setText("❤️" * hearts)
 
     def clear_player_list(self):
         while self.player_list_layout.count():

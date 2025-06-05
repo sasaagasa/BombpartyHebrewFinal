@@ -220,7 +220,7 @@ class Server:
         check_expired_thread.set()
 
     def manage_turns(self):
-        sequences_2, sequences_3 = generate_sequences('C:\sagiv-python\word_list.txt')
+        sequences_2, sequences_3 = generate_sequences('word_list.txt')
         while len(self.players) > 1:
             current_player = self.players[0]  # Get the first player in the list
             challenge = pick_sequence(sequences_2, sequences_3)
@@ -251,6 +251,8 @@ class Server:
             else:
                 current_player.send_message("TIME_UP|You lost a life!\n")
                 current_player.lose_life()
+                for player in self.players:
+                    player.send_message(f"PLAYER_LOST_LIFE|{current_player.name}:{current_player.get_life()}\n")
 
             if current_player.get_life() == 0:
                 current_player.send_message("GAME_OVER|You lose :(\n")
