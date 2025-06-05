@@ -7,7 +7,7 @@ from PyQt6 import QtWidgets
 from game_screen import Ui_GameWindow
 from welcome import Ui_MainWindow
 from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel, QWidget
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, Qt
 
 
 class Client:
@@ -32,7 +32,8 @@ class Client:
             self.client_socket.close()
 
 
-def handle_game_over(result):
+def handle_game_over(window, result):
+    window.show_game_over(result)
     print(result)
 
 
@@ -40,7 +41,6 @@ def handle_turn_start(window, letters):
     window.clear_input()
     window.update_info_text(letters)
     window.update_status("🎯 Your Turn!", "cyan")
-    print(f"Your turn! Your letters: {letters}")
     window.set_input_enabled(True)
     window.input_box.setFocus()
 
@@ -54,13 +54,11 @@ def handle_update_letters(window, others_inputs):
 
 
 def handle_valid_word(window):
-    print("Valid word! Turn over.")
     window.set_input_enabled(False)
     window.update_status("✅ Valid Word!", "green")
 
 
 def handle_time_up(window):
-    print(f"Time's up! you lose 1 life.")
     window.set_input_enabled(False)
     window.clear_input()
     window.update_status("⏰ Time's Up!", "orange")
@@ -92,9 +90,13 @@ def handle_player_list(window, player_list_str):
 
 
 def handle_admin(window, value):
+    lives = 3 # update to be able to choose
+    value, player_list_str = value.split(":")
+    player_names = player_list_str.split(",")
     if value == "GAME_STARTED":
         window.start_button.setEnabled(False)  # enable the button
         window.start_button.hide()  # show the button
+        window.fill_players_hearts(player_names, lives)
     elif value == "YOU_ARE_THE_HOST":
         window.start_button.setEnabled(True)  # enable the button
 
@@ -103,7 +105,7 @@ def handle_server_messages(client, window):
     try:
         message_handlers = {
             "ADMIN": lambda values: handle_admin(window, values),
-            "GAME_OVER": lambda values: handle_game_over(values),
+            "GAME_OVER": lambda values: handle_game_over(window, values),
             "TURN_START": lambda values: handle_turn_start(window, values),
             "UPDATE_INPUT": lambda values: handle_update_input(window, values),
             "UPDATE_LETTERS": lambda values: handle_update_letters(window, values),
@@ -118,7 +120,8 @@ def handle_server_messages(client, window):
 
         while True:
             data = client.recv_message()
-            print(f"got from server: {data}")
+            if data.split('|')[0] != "UPDATE_INPUT":
+                print(f"got from server: {data}")
             data_list = data.split("\n")
             for message in data_list:
                 if message != "":
@@ -155,11 +158,13 @@ class Window(QMainWindow, Ui_MainWindow):
 class GameWindow(QMainWindow, Ui_GameWindow):
     def __init__(self, client):
         super().__init__()
+        self.overlay = QLabel(self)
         self.client = client
         self.displayed_players = set()
         self.saved_text = ""
         self.player_hearts = {}  # maps player name -> QLabel showing their hearts
         self.setupUi(self)
+        self.hearts_dic = {}
 
         # Connect UI events
         self.input_box.textChanged.connect(self.save_input)
@@ -167,6 +172,12 @@ class GameWindow(QMainWindow, Ui_GameWindow):
         self.input_box.setEnabled(False)
         self.start_button.clicked.connect(self.start_game)
         self.start_button.setEnabled(False)
+
+    def fill_players_hearts(self, players_names, lives):
+        for name in players_names:
+            print(name)
+            self.hearts_dic[name] = lives
+        print(self.hearts_dic)
 
     def update_player_list(self, player_names):
         self._player_names_to_update = player_names
@@ -187,8 +198,12 @@ class GameWindow(QMainWindow, Ui_GameWindow):
                 font-weight: bold;
                 font-size: 16px;
             """)
-
-            hearts_label = QLabel("❤️❤️❤️")  # Default 3 lives
+            if self.hearts_dic:
+                print('--------------------------------')
+                print(f"{self.hearts_dic[name]}************")
+                hearts_label = QLabel("❤️️" * self.hearts_dic[name])
+            else:
+                hearts_label = QLabel("❤️️❤️️❤️️")
             hearts_label.setStyleSheet("font-size: 16px; margin-left: 10px;")
 
             layout.addWidget(name_label)
@@ -200,8 +215,8 @@ class GameWindow(QMainWindow, Ui_GameWindow):
             self.player_hearts[name] = hearts_label  # Store for future updates
 
     def update_hearts(self, name, hearts):
+        self.hearts_dic[name] = hearts
         if name in self.displayed_players:
-            print("saasdsfsdff")
             self.player_hearts[name].setText("❤️" * hearts)
 
     def clear_player_list(self):
@@ -210,6 +225,29 @@ class GameWindow(QMainWindow, Ui_GameWindow):
             widget = item.widget()
             if widget:
                 widget.setParent(None)
+
+    def show_game_over(self, result: str):
+        self.overlay.setGeometry(0, 0, self.width(), self.height())
+        self.overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        if result == "WIN":
+            text = "🏆 YOU WIN 🏆"
+            color = "gold"
+        else:
+            text = "💥 YOU LOSE 💥"
+            color = "red"
+
+        self.overlay.setText(text)
+        self.overlay.setStyleSheet(f"""
+            background-color: rgba(0, 0, 0, 180);
+            color: {color};
+            font-size: 48px;
+            font-weight: bold;
+            border: 4px solid white;
+            border-radius: 20px;
+        """)
+        self.overlay.raise_()  # Bring to front
+        self.overlay.show()
 
     def update_info_text(self, text):
         self.letters_label.setText(text)
@@ -226,7 +264,6 @@ class GameWindow(QMainWindow, Ui_GameWindow):
 
     def save_input(self, text):
         self.saved_text = text
-        print(f"text entered {text}")
         self.client.send_message(f"INPUT_CLIENT|{text}\n")
 
     def send_input(self):

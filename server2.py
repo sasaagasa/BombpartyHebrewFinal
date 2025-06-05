@@ -3,9 +3,6 @@ from bs4 import BeautifulSoup
 import random
 import socket
 import threading
-import time
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QApplication, QLabel
 
 
 def generate_random_hebrew_letters():
@@ -90,7 +87,7 @@ class Player:
                 self.socket.sendall(message.encode())  # Send encoded message
                 print(f"send to client:{message}")
         except (ConnectionResetError, BrokenPipeError, OSError):
-            self.server.remove_client(self)  # close connection with client
+            self.server.remove_completely(self)  # close connection with client
         except Exception as e:
             print(f"Error sending to {self.name}: {e}")
 
@@ -108,7 +105,7 @@ class Player:
         except socket.timeout:
             raise  # Let timeout propagate so `get_word` can catch it
         except (ConnectionResetError, BrokenPipeError, OSError):
-            self.server.remove_client(self)  # close connection with client
+            self.server.remove_completely(self)  # close connection with client
         except Exception as e:
             print(f"Error receiving from {self.name}: {e}")
             return None  # Return None for other errors
@@ -123,7 +120,7 @@ class Player:
         return self.lives  # Return remaining lives
 
     def is_connected(self):
-        self.socket.connected
+        self.socket.connected()
 
     def settimeout(self, timeout):
         self.socket.settimeout(timeout)  # Pass timeout to the actual socket
@@ -136,61 +133,62 @@ class Server:
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.TIME_LIMIT = 5
         self.start_game = False
-        self.players = []
-        self.players_dic = {}
+        self.playing_players = []
+        self.all_players = []
         self.used_words = set()
         self.num_player = 0
 
     def add_player(self, client_socket, name):
         self.num_player += 1
         player = Player(name, client_socket, self.num_player, self)
-        self.players.append(player)
-        self.players_dic[self.num_player] = player
+        self.playing_players.append(player)
+        self.all_players.append(player)
         self.broadcast_player_list()  # 🔁 Notify all clients
 
-        admin = self.players[0]
-        if len(self.players) >= 2 and not self.start_game:
-            admin.send_message("ADMIN|YOU_ARE_THE_HOST")
+        admin = self.playing_players[0]
+        if len(self.playing_players) >= 2 and not self.start_game:
+            admin.send_message("ADMIN|YOU_ARE_THE_HOST:")
             self.before_game_start(admin)
 
     def before_game_start(self, admin):
-        while not self.start_game and len(self.players) >= 2:
+        names = [p.name for p in self.playing_players]
+        while not self.start_game and len(self.playing_players) >= 2:
             message = admin.receive_message()
             print(f"in while {message}")
             if message == "BUTTON|START_GAME":
                 self.start_game = True
-                for player in self.players:
-                    player.send_message("ADMIN|GAME_STARTED")
-                random.shuffle(self.players)
+                for player in self.playing_players:
+                    player.send_message(f"ADMIN|GAME_STARTED:"+",".join(names))
+                random.shuffle(self.playing_players)
                 threading.Thread(target=self.manage_turns, daemon=True).start()
 
-    def remove_client(self, player):
-        if player in self.players:
-            self.players.remove(player)
+    def remove_completely(self, player):
+        if player in self.all_players:
+            self.all_players.remove(player)
             print(f"{player.name} disconnected")
             player.socket.close()
 
-    def remove_player(self, player):
-        if player in self.players:
-            self.players.remove(player)
+    def move_to_spectate(self, player):
+        if player in self.playing_players:
+            self.playing_players.remove(player)
             self.broadcast_player_list()  # 🔁 Notify all clients
 
     def update_input(self, current_client, text):
-        for player in self.players:
+        for player in self.all_players:
             if current_client.id != player.id and text not in (None, "ENTER"):
                 player.send_message(f"UPDATE_INPUT|{text}\n")
 
     def update_all_client(self, current_player):
-        for player in self.players:
+        for player in self.all_players:
             if player.id != current_player.id:
                 message = f"UPDATE_LETTERS|{current_player.letters}\n"
                 print(f"Sending to {player.name}: {message}")  # Log the message
                 player.send_message(message)
 
     def broadcast_player_list(self):
-        names = [p.name for p in self.players]
+        names = [p.name for p in self.playing_players]
         message = "PLAYER_LIST|" + ",".join(names) + "\n"
-        for player in self.players:
+        for player in self.all_players:
             player.send_message(message)
 
     def get_word(self, player, timer_expired):
@@ -221,8 +219,8 @@ class Server:
 
     def manage_turns(self):
         sequences_2, sequences_3 = generate_sequences('word_list.txt')
-        while len(self.players) > 1:
-            current_player = self.players[0]  # Get the first player in the list
+        while len(self.playing_players) > 1:
+            current_player = self.playing_players[0]  # Get the first player in the list
             challenge = pick_sequence(sequences_2, sequences_3)
             # Notify player that it's their turn
             current_player.send_message(f"TURN_START|{challenge}\n")
@@ -232,10 +230,10 @@ class Server:
             timer_expired = threading.Event()
 
             # start timer
-            timer = threading.Timer(10, self.timeout, args=(timer_expired,))
+            timer = threading.Timer(5, self.timeout, args=(timer_expired,))
             timer.start()
 
-            while not timer_expired.is_set() and current_player in self.players:
+            while not timer_expired.is_set() and current_player in self.playing_players:
                 word = self.get_word(current_player, timer_expired)
                 print(f"***{word}***")
                 if word is not None and verify(word, challenge) and word not in self.used_words:
@@ -251,17 +249,20 @@ class Server:
             else:
                 current_player.send_message("TIME_UP|You lost a life!\n")
                 current_player.lose_life()
-                for player in self.players:
+                for player in self.all_players:
                     player.send_message(f"PLAYER_LOST_LIFE|{current_player.name}:{current_player.get_life()}\n")
 
             if current_player.get_life() == 0:
-                current_player.send_message("GAME_OVER|You lose :(\n")
-                self.remove_player(current_player)  # only remove the player form the list
+                self.move_to_spectate(current_player)  # remove the player from the playing list
 
-                if len(self.players) == 1:
-                    self.players[0].send_message("GAME_OVER|You win!\n")
+                if len(self.playing_players) == 1:
+                    self.playing_players[0].send_message("GAME_OVER|WIN\n")
+                    for player in self.all_players:
+                        if player.id != self.playing_players[0].id:
+                            player.send_message("GAME_OVER|LOSE\n")
+
             else:
-                self.players.append(self.players.pop(0))  # Move to the next player
+                self.playing_players.append(self.playing_players.pop(0))  # Move to the next player
 
     def handle_client(self, client_socket, client_address):
         print(f"[SERVER] New connection from {client_address}")
