@@ -14,6 +14,7 @@ def generate_random_hebrew_letters():
                       'ק', 'ר', 'ש', 'ת']
     return ''.join(random.sample(hebrew_letters, 2))
 
+
 # Map Hebrew final letters to normal forms
 final_letters = {
     'ך': 'כ',
@@ -85,7 +86,9 @@ class Player:
         """Send a message to the player via their socket."""
         try:
             # print(f"player{self.id},sent:  {message}")
-            self.socket.sendall(message.encode())  # Send encoded message
+            if message:
+                self.socket.sendall(message.encode())  # Send encoded message
+                print(f"send to client:{message}")
         except (ConnectionResetError, BrokenPipeError, OSError):
             self.server.remove_client(self)  # close connection with client
         except Exception as e:
@@ -135,6 +138,7 @@ class Server:
         self.start_game = False
         self.players = []
         self.players_dic = {}
+        self.used_words = set()
         self.num_player = 0
 
     def add_player(self, client_socket, name):
@@ -142,6 +146,8 @@ class Server:
         player = Player(name, client_socket, self.num_player, self)
         self.players.append(player)
         self.players_dic[self.num_player] = player
+        self.broadcast_player_list()  # 🔁 Notify all clients
+
         admin = self.players[0]
         if len(self.players) >= 2 and not self.start_game:
             admin.send_message("ADMIN|YOU_ARE_THE_HOST")
@@ -153,7 +159,8 @@ class Server:
             print(f"in while {message}")
             if message == "BUTTON|START_GAME":
                 self.start_game = True
-                admin.send_message("ADMIN|GAME_STARTED")
+                for player in self.players:
+                    player.send_message("ADMIN|GAME_STARTED")
                 random.shuffle(self.players)
                 threading.Thread(target=self.manage_turns, daemon=True).start()
 
@@ -162,6 +169,11 @@ class Server:
             self.players.remove(player)
             print(f"{player.name} disconnected")
             player.socket.close()
+
+    def remove_player(self, player):
+        if player in self.players:
+            self.players.remove(player)
+            self.broadcast_player_list()  # 🔁 Notify all clients
 
     def update_input(self, current_client, text):
         for player in self.players:
@@ -174,6 +186,12 @@ class Server:
                 message = f"UPDATE_LETTERS|{current_player.letters}\n"
                 print(f"Sending to {player.name}: {message}")  # Log the message
                 player.send_message(message)
+
+    def broadcast_player_list(self):
+        names = [p.name for p in self.players]
+        message = "PLAYER_LIST|" + ",".join(names) + "\n"
+        for player in self.players:
+            player.send_message(message)
 
     def get_word(self, player, timer_expired):
         text = ""
@@ -205,14 +223,12 @@ class Server:
         sequences_2, sequences_3 = generate_sequences('C:\sagiv-python\word_list.txt')
         while len(self.players) > 1:
             current_player = self.players[0]  # Get the first player in the list
-            letters_str = generate_random_hebrew_letters()
             challenge = pick_sequence(sequences_2, sequences_3)
             # Notify player that it's their turn
             current_player.send_message(f"TURN_START|{challenge}\n")
             print(f"server: It's {current_player.name}'s turn. Letters: {challenge}")
             current_player.set_letters(challenge)  # set the letters in player
             self.update_all_client(current_player)
-
             timer_expired = threading.Event()
 
             # start timer
@@ -222,11 +238,13 @@ class Server:
             while not timer_expired.is_set() and current_player in self.players:
                 word = self.get_word(current_player, timer_expired)
                 print(f"***{word}***")
-                # word = current_player.receive_message()
-                if word is not None and verify(word, challenge):
+                if word is not None and verify(word, challenge) and word not in self.used_words:
                     timer.cancel()  # cancel timer
+                    self.used_words.add(word)
                     current_player.send_message("VALID_WORD|Turn over\n")
                     break
+                elif word in self.used_words:
+                    current_player.send_message(f"USED_WORD|Try again. Letters: {challenge}\n")
                 else:
                     current_player.send_message(f"INVALID_WORD|Try again. Letters: {challenge}\n")
 
@@ -236,7 +254,7 @@ class Server:
 
             if current_player.get_life() == 0:
                 current_player.send_message("GAME_OVER|You lose :(\n")
-                self.remove_client(current_player)  # todo: do not remove player.
+                self.remove_player(current_player)  # only remove the player form the list
 
                 if len(self.players) == 1:
                     self.players[0].send_message("GAME_OVER|You win!\n")
@@ -246,6 +264,7 @@ class Server:
     def handle_client(self, client_socket, client_address):
         print(f"[SERVER] New connection from {client_address}")
         name = client_socket.recv(1024).decode()
+        print(name)
         self.add_player(client_socket, name)
 
     def start(self):
