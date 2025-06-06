@@ -230,7 +230,7 @@ class Server:
             timer_expired = threading.Event()
 
             # start timer
-            timer = threading.Timer(5, self.timeout, args=(timer_expired,))
+            timer = threading.Timer(10, self.timeout, args=(timer_expired,))
             timer.start()
 
             while not timer_expired.is_set() and current_player in self.playing_players:
