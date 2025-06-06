@@ -41,6 +41,7 @@ def handle_turn_start(window, letters):
     window.clear_input()
     window.update_info_text(letters)
     window.update_status("🎯 Your Turn!", "cyan")
+    window.input_box.setPlaceholderText("הכנס מילה כאן")
     window.set_input_enabled(True)
     window.input_box.setFocus()
 
@@ -56,12 +57,16 @@ def handle_update_letters(window, others_inputs):
 def handle_valid_word(window):
     window.set_input_enabled(False)
     window.update_status("✅ Valid Word!", "green")
+    window.clear_input()
+    window.input_box.setPlaceholderText("")
+
 
 
 def handle_time_up(window):
     window.set_input_enabled(False)
     window.clear_input()
     window.update_status("⏰ Time's Up!", "orange")
+    window.input_box.setPlaceholderText("")
 
 
 def handle_life_lost(window, value):
@@ -75,12 +80,12 @@ def handle_life_lost(window, value):
 
 
 def handle_invalid_word(window, retry_message):
-    print(retry_message)
+    window.clear_input()
     window.update_status("❌ Invalid Word, try again!", "red")
 
 
+
 def handle_used_word(window, retry_message):
-    print(retry_message)
     window.update_status("©️ Used Word, try again!", "red")
 
 
@@ -90,7 +95,7 @@ def handle_player_list(window, player_list_str):
 
 
 def handle_admin(window, value):
-    lives = 3 # update to be able to choose
+    lives = 3  # update to be able to choose
     value, player_list_str = value.split(":")
     player_names = player_list_str.split(",")
     if value == "GAME_STARTED":
@@ -190,21 +195,34 @@ class GameWindow(QMainWindow, Ui_GameWindow):
         for name in self._player_names_to_update:
             container = QWidget()
             layout = QtWidgets.QHBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setContentsMargins(10, 5, 10, 5)
+            layout.setSpacing(15)
 
+            # Clean dark translucent background
+            container.setStyleSheet("""
+                background-color: rgba(0, 0, 0, 0.4);  /* Soft dark glass */
+                border-radius: 12px;
+                margin: 5px;
+            """)
+
+            # Player name label
             name_label = QLabel(name)
             name_label.setStyleSheet("""
                 color: white;
-                font-weight: bold;
-                font-size: 16px;
+                font-weight: 600;
+                font-size: 18px;
+                font-family: 'Segoe UI', sans-serif;
             """)
+
+            # Hearts label
             if self.hearts_dic:
-                print('--------------------------------')
-                print(f"{self.hearts_dic[name]}************")
-                hearts_label = QLabel("❤️️" * self.hearts_dic[name])
+                hearts_label = QLabel("❤️" * self.hearts_dic[name])
             else:
-                hearts_label = QLabel("❤️️❤️️❤️️")
-            hearts_label.setStyleSheet("font-size: 16px; margin-left: 10px;")
+                hearts_label = QLabel("❤️❤️❤️")
+            hearts_label.setStyleSheet("""
+                font-size: 18px;
+                margin-left: 5px;
+            """)
 
             layout.addWidget(name_label)
             layout.addWidget(hearts_label)
@@ -251,10 +269,27 @@ class GameWindow(QMainWindow, Ui_GameWindow):
 
     def update_info_text(self, text):
         self.letters_label.setText(text)
+        self.letters_label.setStyleSheet("""
+            color: white;
+            background-color: rgba(0, 0, 0, 0.6);  /* semi-transparent black */
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-size: 32px;
+            font-weight: bold;
+            font-family: 'Segoe UI', sans-serif;
+        """)
+        self.letters_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def update_status(self, message, color):
         self.status_label.setText(message)
-        self.status_label.setStyleSheet(f"color: {color}; font-size: 18px; font-weight: bold;")
+        self.status_label.setStyleSheet(f"""
+            color: {color};
+            font-size: 20px;
+            font-weight: bold;
+            background-color: rgba(0, 0, 0, 0.6);
+            border-radius: 8px;
+            padding: 6px 10px;
+        """)
 
     def set_input_enabled(self, state: bool):
         self.input_box.setDisabled(not state)
@@ -282,6 +317,7 @@ class GameWindow(QMainWindow, Ui_GameWindow):
 # --- main function ---
 def main():
     ip = '127.0.0.1'
+    # ip = '192.168.68.57'
     port = 65432
     app = QApplication([])
 
