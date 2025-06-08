@@ -3,70 +3,72 @@ from bs4 import BeautifulSoup
 import random
 import socket
 import threading
+from encryption_manager import EncryptionManager
+
+class GameUtils:
+    final_letters = {
+        'ך': 'כ',
+        'ם': 'מ',
+        'ן': 'נ',
+        'ף': 'פ',
+        'ץ': 'צ'
+    }
+    @staticmethod
+    def generate_random_hebrew_letters():
+        hebrew_letters = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט',
+                          'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ',
+                          'ק', 'ר', 'ש', 'ת']
+        return ''.join(random.sample(hebrew_letters, 2))
+
+    # Map Hebrew final letters to normal forms
 
 
-def generate_random_hebrew_letters():
-    hebrew_letters = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט',
-                      'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ',
-                      'ק', 'ר', 'ש', 'ת']
-    return ''.join(random.sample(hebrew_letters, 2))
+    @classmethod
+    # Function to normalize a word (replace final forms with normal ones)
+    def normalize(cls, word):
+        return ''.join(cls.final_letters.get(c, c) for c in word)
 
+    @classmethod
+    # Function to load words and generate sequences
+    def generate_sequences(cls, file_path):
+        with open(file_path, encoding='utf-8') as f:
+            words = [cls.normalize(line.strip()) for line in f if line.strip()]
 
-# Map Hebrew final letters to normal forms
-final_letters = {
-    'ך': 'כ',
-    'ם': 'מ',
-    'ן': 'נ',
-    'ף': 'פ',
-    'ץ': 'צ'
-}
+        sequences_2 = set()
+        sequences_3 = set()
 
+        for word in words:
+            length = len(word)
+            for i in range(length - 1):  # 2-letter sequences
+                sequences_2.add(word[i:i + 2])
+            for i in range(length - 2):  # 3-letter sequences
+                sequences_3.add(word[i:i + 3])
+        print(sequences_2, '\n')
+        print(sequences_3)
+        return list(sequences_2), list(sequences_3)
 
-# Function to normalize a word (replace final forms with normal ones)
-def normalize(word):
-    return ''.join(final_letters.get(c, c) for c in word)
+    @staticmethod
+    # Function to pick a random sequence
+    def pick_sequence(sequences_2, sequences_3):
+        if random.random() < 0.7:
+            # 70% chance for 2-letter
+            return random.choice(sequences_2)
+        else:
+            # 30% chance for 3-letter
+            return random.choice(sequences_3)
 
-
-# Function to load words and generate sequences
-def generate_sequences(file_path):
-    with open(file_path, encoding='utf-8') as f:
-        words = [normalize(line.strip()) for line in f if line.strip()]
-
-    sequences_2 = set()
-    sequences_3 = set()
-
-    for word in words:
-        length = len(word)
-        for i in range(length - 1):  # 2-letter sequences
-            sequences_2.add(word[i:i + 2])
-        for i in range(length - 2):  # 3-letter sequences
-            sequences_3.add(word[i:i + 3])
-    print(sequences_2, '\n')
-    print(sequences_3)
-    return list(sequences_2), list(sequences_3)
-
-
-# Function to pick a random sequence
-def pick_sequence(sequences_2, sequences_3):
-    if random.random() < 0.7:
-        # 70% chance for 2-letter
-        return random.choice(sequences_2)
-    else:
-        # 30% chance for 3-letter
-        return random.choice(sequences_3)
-
-
-def verify(word, letters):
-    if letters not in word:
+    @staticmethod
+    def verify(word, letters):
+        if letters not in word:
+            return False
+        url = "https://milog.co.il/"
+        response = requests.get(url + word)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        div_content = soup.find('div', class_='sr_below_text')
+        if div_content:
+            sub_content = div_content.get_text().split(' ')
+            return sub_content[0] == "התקבלו" and sub_content[1].isnumeric()
         return False
-    url = "https://milog.co.il/"
-    response = requests.get(url + word)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    div_content = soup.find('div', class_='sr_below_text')
-    if div_content:
-        sub_content = div_content.get_text().split(' ')
-        return sub_content[0] == "התקבלו" and sub_content[1].isnumeric()
-    return False
 
 
 class Player:
@@ -77,7 +79,6 @@ class Player:
         self.lives = lives
         self.letters = ""
         self.server = server
-        self.is_turn = False  # Track if it's their turn
 
     def send_message(self, message):
         """Send a message to the player via their socket."""
@@ -119,9 +120,6 @@ class Player:
     def get_life(self):
         return self.lives  # Return remaining lives
 
-    def is_connected(self):
-        self.socket.connected()
-
     def settimeout(self, timeout):
         self.socket.settimeout(timeout)  # Pass timeout to the actual socket
 
@@ -131,7 +129,7 @@ class Server:
         self.ip = ip
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.TIME_LIMIT = 5
+        self.encryption_manager = EncryptionManager(is_server=True)
         self.start_game = False
         self.playing_players = []
         self.all_players = []
@@ -140,6 +138,7 @@ class Server:
 
     def add_player(self, client_socket, name):
         self.num_player += 1
+        print("שם המשתמש שהתקבל:", name)
         player = Player(name, client_socket, self.num_player, self)
         self.playing_players.append(player)
         self.all_players.append(player)
@@ -199,29 +198,29 @@ class Server:
             while not timer_expired.is_set():  # Keep checking if time expired
                 try:
                     data = player.receive_message()
-                    if data.count('|') == 1:  # Ensure exactly one separator
-                        _, input_c = data.split('|', 1)  # Split only once
+                    if data.count('|') == 1:
+                        _, input_c = data.split('|', 1)
                         self.update_input(player, input_c)
                         if input_c == "ENTER":
                             return text
                         if input_c:
                             text = input_c
                 except socket.timeout:
-                    continue  # Instead of failing, keep looping to check if time expired
+                    continue  # keep looping to check if time expired
         except Exception as e:
             print(f"Error receiving message: {e}")
 
-        return None  # If the timer expired, return None immediately
+        return None
 
     @staticmethod
     def timeout(check_expired_thread):
         check_expired_thread.set()
 
     def manage_turns(self):
-        sequences_2, sequences_3 = generate_sequences('word_list.txt')
+        sequences_2, sequences_3 = GameUtils.generate_sequences('word_list.txt')
         while len(self.playing_players) > 1:
             current_player = self.playing_players[0]  # Get the first player in the list
-            challenge = pick_sequence(sequences_2, sequences_3)
+            challenge = GameUtils.pick_sequence(sequences_2, sequences_3)
             # Notify player that it's their turn
             current_player.send_message(f"TURN_START|{challenge}\n")
             print(f"server: It's {current_player.name}'s turn. Letters: {challenge}")
@@ -236,7 +235,7 @@ class Server:
             while not timer_expired.is_set() and current_player in self.playing_players:
                 word = self.get_word(current_player, timer_expired)
                 print(f"***{word}***")
-                if word is not None and verify(word, challenge) and word not in self.used_words:
+                if word is not None and GameUtils.verify(word, challenge) and word not in self.used_words:
                     timer.cancel()  # cancel timer
                     self.used_words.add(word)
                     current_player.send_message("VALID_WORD|Turn over\n")
@@ -266,9 +265,36 @@ class Server:
 
     def handle_client(self, client_socket, client_address):
         print(f"[SERVER] New connection from {client_address}")
-        name = client_socket.recv(1024).decode()
-        print(name)
-        self.add_player(client_socket, name)
+        # 1. שלח מפתח ציבורי (פעם אחת בלבד)
+        public_key_bytes = self.encryption_manager.get_serialized_public_key()
+        client_socket.sendall(len(public_key_bytes).to_bytes(4, 'big') + public_key_bytes)
+
+        # 2. קבל אורך ההודעה המוצפנת (4 בייטים)
+        encrypted_length_bytes = client_socket.recv(4)
+        if len(encrypted_length_bytes) < 4:
+            print("[SERVER] Failed to receive encrypted message length.")
+            client_socket.close()
+            return
+        encrypted_length = int.from_bytes(encrypted_length_bytes, 'big')
+
+        # 3. קרא את ההודעה המוצפנת במלואה
+        encrypted_message = b""
+        while len(encrypted_message) < encrypted_length:
+            chunk = client_socket.recv(encrypted_length - len(encrypted_message))
+            if not chunk:
+                print("[SERVER] Connection lost while receiving encrypted message.")
+                client_socket.close()
+                return
+            encrypted_message += chunk
+
+        try:
+            decrypted_message = self.encryption_manager.decrypt(encrypted_message)
+            print(f"[SERVER] Decrypted message: {decrypted_message}")
+        except Exception as e:
+            print(f"[SERVER] Decryption failed: {e}")
+            client_socket.close()
+            return
+        self.add_player(client_socket, decrypted_message)
 
     def start(self):
         self.server_socket.bind((self.ip, self.port))
